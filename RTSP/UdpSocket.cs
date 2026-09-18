@@ -31,7 +31,19 @@ namespace Rtsp
         /// Initializes a new instance of the <see cref="UDPSocket"/> class.
         /// Creates two new UDP sockets using the start and end Port range
         /// </summary>
-        public UDPSocket(int startPort, int endPort)
+        public UDPSocket(int startPort, int endPort) : this(startPort, endPort, AddressFamily.InterNetwork)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="UDPSocket"/> class.
+        /// Creates two new UDP sockets using the start and end Port range
+        /// </summary>
+        /// <param name="addressFamily">
+        /// The address family to open the sockets in. Use <see cref="AddressFamily.InterNetworkV6"/>
+        /// to send RTP to a client that is reached over IPv6.
+        /// </param>
+        public UDPSocket(int startPort, int endPort, AddressFamily addressFamily)
         {
             // open a pair of UDP sockets - one for data (video or audio) and one for the status channel (RTCP messages)
             DataPort = startPort;
@@ -43,8 +55,8 @@ namespace Rtsp
                 // Video/Audio port must be odd and command even (next one)
                 try
                 {
-                    dataSocket = new UdpClient(DataPort);
-                    controlSocket = new UdpClient(ControlPort);
+                    dataSocket = new UdpClient(DataPort, addressFamily);
+                    controlSocket = new UdpClient(ControlPort, addressFamily);
                     ok = true;
                 }
                 catch (SocketException)
@@ -62,7 +74,12 @@ namespace Rtsp
                 {
                     dataSocket!.Client.ReceiveBufferSize = 100 * 1024;
                     dataSocket!.Client.SendBufferSize = 65535; // default is 8192. Make it as large as possible for large RTP packets which are not fragmented
-                    controlSocket!.Client.DontFragment = false;
+
+                    if (addressFamily == AddressFamily.InterNetwork)
+                    {
+                        // an IPv4 socket option, and not supported on every platform for IPv6
+                        controlSocket!.Client.DontFragment = false;
+                    }
                 }
             }
 
@@ -172,22 +189,53 @@ namespace Rtsp
 
         public void SetDataDestination(string hostname, int port)
         {
-            var adresses = Dns.GetHostAddresses(hostname);
-            if (adresses.Length == 0)
-            {
-                throw new ArgumentException("No IP address found for the hostname", nameof(hostname));
-            }
-            _dataEndPoint = new IPEndPoint(adresses[0], port);
+            _dataEndPoint = ResolveDestination(dataSocket, hostname, port);
         }
 
         public void SetControlDestination(string hostname, int port)
         {
-            var adresses = Dns.GetHostAddresses(hostname);
-            if (adresses.Length == 0)
+            _controlEndPoint = ResolveDestination(controlSocket, hostname, port);
+        }
+
+        /// <summary>
+        /// Picks an address for the hostname that the given socket can actually send to.
+        /// </summary>
+        /// <remarks>
+        /// A name can resolve to both IPv4 and IPv6 addresses, and a socket can only send to its own
+        /// family, so taking the first address returned fails whenever that is the other one. A dual
+        /// mode socket can reach an IPv4 address through its mapped form.
+        /// </remarks>
+        private static IPEndPoint ResolveDestination(UdpClient socket, string hostname, int port)
+        {
+            var addresses = Dns.GetHostAddresses(hostname);
+            if (addresses.Length == 0)
             {
                 throw new ArgumentException("No IP address found for the hostname", nameof(hostname));
             }
-            _controlEndPoint = new IPEndPoint(adresses[0], port);
+
+            var family = socket.Client.AddressFamily;
+
+            foreach (var address in addresses)
+            {
+                if (address.AddressFamily == family)
+                {
+                    return new IPEndPoint(address, port);
+                }
+            }
+
+            if (family == AddressFamily.InterNetworkV6 && socket.Client.DualMode)
+            {
+                foreach (var address in addresses)
+                {
+                    if (address.AddressFamily == AddressFamily.InterNetwork)
+                    {
+                        return new IPEndPoint(address.MapToIPv6(), port);
+                    }
+                }
+            }
+
+            throw new ArgumentException(
+                $"No {family} address found for the hostname", nameof(hostname));
         }
 
         public void WriteToControlPort(ReadOnlySpan<byte> data) => controlSocket.Send(data, _controlEndPoint);
