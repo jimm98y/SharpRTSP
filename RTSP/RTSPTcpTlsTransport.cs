@@ -14,7 +14,6 @@ namespace Rtsp
     {
         private readonly RemoteCertificateValidationCallback? _userCertificateValidationCallback;
         private readonly X509Certificate2? _serverCertificate;
-        private readonly string _serverHostname;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RtspTcpTlsTransport"/> class as an SSL/TLS Client
@@ -26,7 +25,7 @@ namespace Rtsp
             _userCertificateValidationCallback = userCertificateValidationCallback;
 
             // quite a hack, need more work 
-            _serverHostname = tcpConnection.Client.RemoteEndPoint?.ToString() ?? "";
+            TargetHost = RemoteEndPoint.Address.ToString();
         }
 
         /// <summary>
@@ -37,7 +36,7 @@ namespace Rtsp
         public RtspTcpTlsTransport(Uri uri, RemoteCertificateValidationCallback? userCertificateValidationCallback)
             : this(new TcpClient(uri.Host, uri.Port), userCertificateValidationCallback)
         {
-            _serverHostname = uri.Host;
+            TargetHost = uri.DnsSafeHost;
         }
 
         /// <summary>
@@ -50,9 +49,18 @@ namespace Rtsp
             : this(tcpConnection, userCertificateValidationCallback)
         {
             _serverCertificate = certificate;
-            _serverHostname = "";
+            // not use in server mode
+            TargetHost = string.Empty;
         }
 
+        /// <summary>
+        /// Gets or sets the name of the server the certificate must be issued to, as a TLS Client.
+        /// </summary>
+        /// <remarks>
+        /// Set from the uri when the transport makes the connection.
+        /// </remarks>
+        public string TargetHost { get; set; }
+        
         /// <summary>
         /// Gets the stream of the transport.
         /// </summary>
@@ -72,7 +80,7 @@ namespace Rtsp
             }
             else
             {
-                sslStream.AuthenticateAsClient(_serverHostname);
+                sslStream.AuthenticateAsClient(TargetHost);
             }
             return sslStream;
         }
