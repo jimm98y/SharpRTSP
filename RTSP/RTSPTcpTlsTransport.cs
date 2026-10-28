@@ -16,17 +16,20 @@ namespace Rtsp
         private readonly X509Certificate2? _serverCertificate;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="RtspTcpTlsTransport"/> class as a SSL/TLS Client
+        /// Initializes a new instance of the <see cref="RtspTcpTlsTransport"/> class as an SSL/TLS Client
         /// </summary>
         /// <param name="tcpConnection">The underlying TCP connection.</param>
         /// <param name="userCertificateValidationCallback">The user certificate validation callback, <see langword="null"/> if default should be used.</param>
         public RtspTcpTlsTransport(TcpClient tcpConnection, RemoteCertificateValidationCallback? userCertificateValidationCallback = null) : base(tcpConnection)
         {
             _userCertificateValidationCallback = userCertificateValidationCallback;
+
+            // quite a hack, need more work 
+            TargetHost = RemoteEndPoint.Address.ToString();
         }
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="RtspTcpTransport"/> class as a SSL/TLS Client.
+        /// Initializes a new instance of the <see cref="RtspTcpTransport"/> class as an SSL/TLS Client.
         /// </summary>
         /// <param name="uri">The RTSP uri to connect to.</param>
         /// <param name="userCertificateValidationCallback">The user certificate validation callback, <see langword="null"/> if default should be used.</param>
@@ -37,16 +40,7 @@ namespace Rtsp
         }
 
         /// <summary>
-        /// Gets or sets the name of the server the certificate must be issued to, as a TLS Client.
-        /// </summary>
-        /// <remarks>
-        /// Set from the uri when the transport makes the connection. For a connection made elsewhere,
-        /// <see langword="null"/> checks the certificate against the remote address.
-        /// </remarks>
-        public string? TargetHost { get; set; }
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="RtspTcpTlsTransport"/> class as a SSL/TLS Server with a certificate.
+        /// Initializes a new instance of the <see cref="RtspTcpTlsTransport"/> class as an SSL/TLS Server with a certificate.
         /// </summary>
         /// <param name="tcpConnection">The underlying TCP connection.</param>
         /// <param name="certificate">The certificate for the TLS Server.</param>
@@ -55,8 +49,18 @@ namespace Rtsp
             : this(tcpConnection, userCertificateValidationCallback)
         {
             _serverCertificate = certificate;
+            // not use in server mode
+            TargetHost = string.Empty;
         }
 
+        /// <summary>
+        /// Gets or sets the name of the server the certificate must be issued to, as a TLS Client.
+        /// </summary>
+        /// <remarks>
+        /// Set from the uri when the transport makes the connection.
+        /// </remarks>
+        public string TargetHost { get; set; }
+        
         /// <summary>
         /// Gets the stream of the transport.
         /// </summary>
@@ -76,7 +80,7 @@ namespace Rtsp
             }
             else
             {
-                sslStream.AuthenticateAsClient(TargetHost ?? RemoteEndPoint.Address.ToString());
+                sslStream.AuthenticateAsClient(TargetHost);
             }
             return sslStream;
         }
