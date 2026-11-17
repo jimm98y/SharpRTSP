@@ -16,6 +16,9 @@ using System.Threading.Tasks;
 
 public class RtspOverHttpListenSocket : IRtspListenSocket
 {
+    private const int TimeoutWaitingClient = 5000;
+    private const int HeaderCountLimit = 50;
+    
     private readonly TcpListener _tcpListener;
     private readonly ILogger _logger;
     private readonly ILoggerFactory? _loggerFactory;
@@ -81,8 +84,11 @@ public class RtspOverHttpListenSocket : IRtspListenSocket
                 var client = await _tcpListener.AcceptTcpClientAsync().ConfigureAwait(false);
 #endif
                 _logger.LogDebug("Connection from {remoteEndPoint}", client.Client.RemoteEndPoint);
-                await HandleHeaderAndAddToSessions(client, cancellationToken).ConfigureAwait(false);
 
+                var addCancellation=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+               addCancellation.CancelAfter(TimeoutWaitingClient);
+                _ = HandleHeaderAndAddToSessions(client, addCancellation.Token).ConfigureAwait(false);
+                
                 // remove old session
                 var sessionToRemove = _activesSessions
                     .Where(kv => kv.Value.IsObsolete)
@@ -102,8 +108,7 @@ public class RtspOverHttpListenSocket : IRtspListenSocket
 
     private async Task HandleHeaderAndAddToSessions(TcpClient client, CancellationToken cancellationToken)
     {
-        // prevent bad client to totally block the system
-        client.ReceiveTimeout = 5000;
+        client.ReceiveTimeout = TimeoutWaitingClient;
         try
         {
             var clientStream = GetStream(client);
@@ -218,7 +223,7 @@ public class RtspOverHttpListenSocket : IRtspListenSocket
     /// <returns>A line (without /r and /n)</returns>
     /// <exception cref="InvalidDataException">Raise when data is too large</exception>
     /// <remarks>
-    /// Exist ecause streamreader read too much data in the buffer
+    /// Exist because streamreader read too much data in the buffer
     /// So slowly read one by one
     /// </remarks>
     private static async Task<string> ReadOneLine(Stream stream, CancellationToken cancellationToken)
@@ -253,11 +258,24 @@ public class RtspOverHttpListenSocket : IRtspListenSocket
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         var headerLine = await ReadOneLine(stream, cancellationToken).ConfigureAwait(false);
+        var headerCount = 0;
         while (!string.IsNullOrEmpty(headerLine))
         {
             var headerParts = headerLine.Split(':', 2);
-            if (headerParts.Length > 1) headers.Add(headerParts[0], headerParts[1].Trim());
+            try
+            {
+                if (headerParts.Length > 1) headers.Add(headerParts[0], headerParts[1].Trim());
+            }
+            catch (ArgumentException e)
+            {
+                // duplicate header is bad behavior
+                throw new InvalidDataException($"Duplicate header {headerParts[0]}", e);
+            }
             headerLine = await ReadOneLine(stream, cancellationToken).ConfigureAwait(false);
+
+            // if the client send too many header the client may be evil.
+            if (headerCount++ > HeaderCountLimit) throw new InvalidDataException("Too many headers");
+
         }
 
         return headers;
